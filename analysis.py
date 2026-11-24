@@ -7,7 +7,11 @@ Indikator:
   Noise impuls   : proporsi piksel yang menyimpang jauh dari hasil median filter
   Ketajaman      : varians hasil Laplacian
   Kekuatan tepi  : rata-rata besar gradien Sobel
-Nilai ambang ditentukan lewat uji coba pada beberapa foto dokumen.
+
+Urutan saran mengikuti urutan pengolahan yang benar:
+  1) noise  2) kecerahan  3) kontras  4) ketajaman
+(noise dibersihkan lebih dulu agar tidak ikut dipertajam atau dicerahkan).
+Tiap saran membawa nilai parameter awal yang dihitung dari kondisi foto.
 """
 import cv2
 import numpy as np
@@ -32,18 +36,33 @@ def analyze(g, noise_dev=40):
 
 
 def _suggest_gamma(mean, lo, hi, target=130):
-    """Gamma yang menggeser rata-rata intensitas mendekati target."""
+    """Gamma yang menggeser rata-rata intensitas mendekati target,
+    dibulatkan ke kelipatan 0.05 (sama dengan step slider)."""
     mean = float(np.clip(mean, 1, 254))
-    return round(float(np.clip(np.log(target / 255) / np.log(mean / 255), lo, hi)), 2)
+    g = np.log(target / 255) / np.log(mean / 255)
+    g = round(float(g) / 0.05) * 0.05
+    return round(float(np.clip(g, lo, hi)), 2)
 
 
 def find_issues(m, th, lang="id"):
-    """Kembalikan daftar kekurangan: key, title, detail, methods, defaults.
+    """Kembalikan daftar kekurangan berurutan: key, title, detail, methods, defaults.
     lang: "id" (Indonesia) atau "en" (English)."""
     def L(i, e):
         return i if lang == "id" else e
 
     issues = []
+
+    # 1) noise dulu
+    if m["noise_ratio"] > th["noise"]:
+        r = m["noise_ratio"]
+        issues.append(dict(
+            key="noise", title=L("Terdapat bintik-bintik (noise impuls)", "Speckles found (impulse noise)"),
+            detail=L(f"{r * 100:.2f}% piksel menyimpang jauh dari hasil median.",
+                     f"{r * 100:.2f}% of pixels deviate strongly from the median result."),
+            methods=["Median Filter"],
+            defaults={"k": 3 if r < 0.03 else 5}))     # maks 5 agar huruf kecil tidak menyatu
+
+    # 2) kecerahan
     if m["brightness"] < th["dark"]:
         issues.append(dict(
             key="gelap", title=L("Citra terlalu gelap", "Image is too dark"),
@@ -58,24 +77,25 @@ def find_issues(m, th, lang="id"):
                      f"Mean intensity {m['brightness']:.0f} (threshold {th['bright']})."),
             methods=["Gamma Correction"],
             defaults={"gamma": _suggest_gamma(m["brightness"], 1.0, 3.0)}))
+
+    # 3) kontras
     if m["contrast"] < th["contrast"] or m["hist_range"] < th["range"]:
         issues.append(dict(
             key="kontras", title=L("Kontras rendah", "Low contrast"),
             detail=L(f"Simpangan baku {m['contrast']:.0f}, rentang histogram {m['hist_range']:.0f}.",
                      f"Std. deviation {m['contrast']:.0f}, histogram range {m['hist_range']:.0f}."),
-            methods=["Contrast Stretching", "Histogram Equalization"], defaults={}))
-    if m["noise_ratio"] > th["noise"]:
-        issues.append(dict(
-            key="noise", title=L("Terdapat bintik-bintik (noise impuls)", "Speckles found (impulse noise)"),
-            detail=L(f"{m['noise_ratio'] * 100:.2f}% piksel menyimpang jauh dari hasil median.",
-                     f"{m['noise_ratio'] * 100:.2f}% of pixels deviate strongly from the median result."),
-            methods=["Median Filter"], defaults={}))
+            methods=["Contrast Stretching", "Histogram Equalization"],
+            defaults={"p_low": 1.0 if m["hist_range"] > 100 else 2.0, "p_high": 99.0}))
+
+    # 4) ketajaman terakhir
     if m["sharpness"] < th["sharp"]:
+        deficit = 1 - m["sharpness"] / max(th["sharp"], 1)
         issues.append(dict(
             key="tajam", title=L("Detail tulisan kurang tajam", "Text details are not sharp"),
             detail=L(f"Varians Laplacian {m['sharpness']:.0f} (ambang {th['sharp']}).",
                      f"Laplacian variance {m['sharpness']:.0f} (threshold {th['sharp']})."),
-            methods=["Laplacian Filter"], defaults={}))
+            methods=["Laplacian Filter"],
+            defaults={"c": round(float(np.clip(0.5 + deficit * 1.5, 0.5, 2.0)), 1)}))
     return issues
 
 
@@ -101,14 +121,14 @@ def check_document(g):
         return dict(ok=False, reason="blank", stats={})
     n = np.clip((g.astype(np.float32) - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8)
     hist = np.bincount(n.ravel(), minlength=256).astype(np.float32)
-    bg = float(np.convolve(hist, np.ones(41), "same").max() / n.size)         # dominasi latar
+    bg = float(np.convolve(hist, np.ones(41), "same").max() / n.size)
     block = max(15, (min(n.shape) // 20) | 1)
     ink = cv2.adaptiveThreshold(cv2.GaussianBlur(n, (3, 3), 0), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                 cv2.THRESH_BINARY_INV, block, 12)
-    ink_ratio = float((ink > 0).mean())                                       # proporsi goresan
+    ink_ratio = float((ink > 0).mean())
     _, _, st, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     areas = st[1:, cv2.CC_STAT_AREA]
-    strokes = int(((areas >= 6) & (areas <= n.size * 0.002)).sum())          # goresan kecil
+    strokes = int(((areas >= 6) & (areas <= n.size * 0.002)).sum())
     stats = dict(bg=bg, ink=ink_ratio, strokes=strokes)
     if ink_ratio < 0.003 or strokes < 8:
         return dict(ok=False, reason="blank", stats=stats)

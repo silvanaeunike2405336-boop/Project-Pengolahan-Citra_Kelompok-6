@@ -5,6 +5,7 @@ Semua fungsi menerima citra grayscale 8-bit (uint8) dan mengembalikan uint8.
 import cv2
 import numpy as np
 
+
 # ------------------------------------------------------------------
 # A. TRANSFORMASI INTENSITAS
 # ------------------------------------------------------------------
@@ -23,8 +24,7 @@ def gamma_correction(g, gamma):
 
 def contrast_stretching(g, p_low=1.0, p_high=99.0):
     """s = (r - rmin) / (rmax - rmin) * (L - 1), L = 256.
-    rmin/rmax diambil dari persentil agar tidak terpengaruh piksel ekstrem.
-    Persentil 0 dan 100 = contrast stretching klasik (min-max)."""
+    rmin/rmax diambil dari persentil agar tidak terpengaruh piksel ekstrem."""
     rmin, rmax = np.percentile(g, p_low), np.percentile(g, p_high)
     if rmax <= rmin:
         return g.copy()
@@ -46,21 +46,19 @@ def average_filter(g, k=3):
 
 
 def median_filter(g, k=3):
-    """Tiap piksel diganti nilai tengah jendela k x k.
-    Efektif untuk derau impuls (salt-and-pepper) dan menjaga tepi."""
+    """Tiap piksel diganti nilai tengah jendela k x k (efektif untuk noise impuls)."""
     return cv2.medianBlur(g, int(k))
 
 
 def laplacian_sharpen(g, c=1.0):
-    """Filter turunan kedua. Kernel Laplacian berpusat negatif, sehingga
-    citra tajam = f - c * Laplacian(f)."""
+    """Citra tajam = f - c * Laplacian(f)."""
     f = g.astype(np.float32)
     lap = cv2.Laplacian(f, cv2.CV_32F, ksize=1)
     return np.clip(f - c * lap, 0, 255).astype(np.uint8)
 
 
 def sobel_edges(g):
-    """Filter turunan pertama. Besar gradien = sqrt(Gx^2 + Gy^2)."""
+    """Besar gradien = sqrt(Gx^2 + Gy^2)."""
     f = g.astype(np.float32)
     gx = cv2.Sobel(f, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(f, cv2.CV_32F, 0, 1, ksize=3)
@@ -74,13 +72,22 @@ def sobel_edges(g):
 METHODS = ["Gamma Correction", "Contrast Stretching", "Histogram Equalization",
            "Median Filter", "Laplacian Filter", "Average Filter", "Sobel Filter"]
 
+# Rentang slider tiap parameter: (min, max, step). Dipakai app dan analysis agar konsisten.
+PARAM_RANGE = {
+    "gamma": (0.1, 3.0, 0.05),
+    "p_low": (0.0, 30.0, 0.5),
+    "p_high": (70.0, 100.0, 0.5),
+    "k": (3, 9, 2),
+    "c": (0.1, 3.0, 0.1),
+}
+
 
 def default_params(name):
     return {"Gamma Correction": {"gamma": 0.6},
             "Contrast Stretching": {"p_low": 1.0, "p_high": 99.0},
             "Median Filter": {"k": 3},
             "Average Filter": {"k": 3},
-            "Laplacian Filter": {"c": 1.0}}.get(name, {})
+            "Laplacian Filter": {"c": 1.0}}.get(name, {}).copy()
 
 
 def apply_method(name, g, params):

@@ -1,5 +1,9 @@
 """app.py: antarmuka Pixora (Streamlit), dua bahasa (ID/EN).
 Jalankan: python -m streamlit run app.py"""
+import base64
+import math
+import random
+
 import cv2
 import numpy as np
 import streamlit as st
@@ -15,14 +19,8 @@ except ImportError:
     except ImportError:
         HAS_PDF = False
 
-from methods import METHODS, default_params, apply_method, blend, to_grayscale
-from analysis import analyze, find_issues, DEFAULT_TH
-
-try:
-    from analysis import check_document
-except ImportError:          # analysis.py versi lama: lewati pemeriksaan dokumen
-    def check_document(g):
-        return {"ok": True, "reason": None, "stats": {}}
+from methods import METHODS, PARAM_RANGE, default_params, apply_method, blend, to_grayscale
+from analysis import analyze, find_issues, check_document, DEFAULT_TH
 
 st.set_page_config(page_title="Pixora", page_icon="🖼️", layout="wide", initial_sidebar_state="collapsed")
 
@@ -34,17 +32,15 @@ TX = {
     "cta": ("Mulai perbaiki foto", "Start enhancing"),
     "chip1": ("Catatan kuliah", "Lecture notes"), "chip2": ("Papan tulis", "Whiteboards"),
     "chip3": ("Materi belajar", "Study material"), "chip4": ("Dokumen", "Documents"),
-    "before": ("Sebelum", "Before"), "after": ("Sesudah", "After"),
+    "before": ("Sebelum", "Before"), "after": ("Sesudah", "After"), "side": ("Berdampingan", "Side by side"),
     "stat1": ("7 metode", "7 methods"), "stat2": ("4 langkah", "4 steps"), "stat3": ("Tanpa akun", "No account"),
-    "how": ("Cara kerja", "How it works"),
-    "c1": ("Pixora membaca kondisi fotomu.", "Pixora reads your photo's condition."),
-    "c2": ("Kamu dapat saran perbaikan yang pas.", "You get fitting fixes suggested."),
-    "c3": ("Atur sendiri, lalu unduh hasilnya.", "Fine-tune it, then download."),
     "s1": ("Unggah", "Upload"), "s2": ("Analisis", "Analyze"), "s3": ("Perbaiki", "Enhance"), "s4": ("Hasil", "Result"),
     "step": ("Langkah", "Step"), "of": ("dari", "of"),
     "msg_upload": ("Unggah foto dokumenmu di bawah.", "Upload your document photo below."),
-    "msg_pick": ("Lihat saran di bawah, lalu klik Terapkan atau Lewati.", "Check the suggestion below, then click Apply or Skip."),
-    "msg_edit": ("Geser slider sampai hasilnya bagus, lalu klik Simpan dan lanjut.", "Drag the sliders until it looks good, then click Save & continue."),
+    "msg_pick": ("Lihat saran di kanan. Terapkan satu per satu, atau sekaligus semuanya.",
+                 "Check the suggestion on the right. Apply them one by one, or all at once."),
+    "msg_edit": ("Geser slider kalau mau mengubah, lalu klik Simpan dan lanjut.",
+                 "Drag the sliders if you want to change it, then click Save & continue."),
     "msg_done": ("Selesai. Cek hasilnya lalu unduh.", "Done. Check the result and download it."),
     "uploader": ("Foto dokumen", "Document photo"), "photo": ("Foto", "Photo"), "change": ("Ganti foto", "Change photo"),
     "bad_img": ("File bukan gambar yang valid. Coba unggah lagi.", "That file is not a valid image. Please try again."),
@@ -56,6 +52,11 @@ TX = {
     "found": ("Ditemukan", "Found"), "suggest": ("Saran", "Suggestion"),
     "still": ("Masih terdeteksi. Tambah perbaikan atau lewati.", "Still detected. Add another fix or skip."),
     "apply": ("Terapkan", "Apply"), "skip": ("Lewati", "Skip"),
+    "apply_all": ("Terapkan semua saran sekaligus", "Apply all suggestions at once"),
+    "auto_tag": ("nilai otomatis", "auto values"),
+    "auto_back": ("Kembali ke saran otomatis", "Back to auto suggestion"),
+    "manual_pick": ("Atau pilih metode sendiri", "Or pick a method yourself"),
+    "manual_hint": ("Pilih metode, lalu atur sendiri nilainya dengan slider.", "Pick a method, then set the values yourself with sliders."),
     "more_issues": ("masalah lain menunggu.", "more issue(s) waiting."),
     "no_issue": ("Tidak ada masalah lain. Foto sudah baik.", "No other issues. Your photo looks good."),
     "show_skipped": ("Tampilkan lagi yang dilewati", "Show skipped issues again"),
@@ -67,7 +68,7 @@ TX = {
     "res_hint": ("Hasil muncul di sini setelah kamu menerapkan perbaikan.", "Your result appears here once you apply a fix."),
     "hist": ("Histogram", "Histogram"), "download": ("Unduh hasil (PNG)", "Download result (PNG)"),
     "adv": ("Pengaturan lanjutan", "Advanced settings"),
-    "tab1": ("Metode manual", "Manual method"), "tab2": ("Ambang deteksi", "Detection thresholds"), "tab3": ("Mulai ulang", "Reset"),
+    "tab2": ("Ambang deteksi", "Detection thresholds"), "tab3": ("Mulai ulang", "Reset"),
     "method": ("Metode", "Method"), "add": ("Tambahkan", "Add"), "reset": ("Reset semua perbaikan", "Reset all fixes"),
     "th_dark": ("Gelap jika rata-rata <", "Dark if mean <"), "th_bright": ("Terang jika rata-rata >", "Bright if mean >"),
     "th_contrast": ("Kontras rendah jika std <", "Low contrast if std <"), "th_range": ("atau lebar histogram <", "or histogram width <"),
@@ -92,23 +93,18 @@ TX = {
     "nd_hint": ("Kalau ini memang dokumenmu, kamu tetap bisa melanjutkan.", "If this really is your document, you can still continue."),
     "nd_force": ("Tetap analisis", "Analyze anyway"),
     "click_hint": ("Klik untuk detail", "Click for details"),
-    "foot_course": ("Pengolahan Citra dan Computer Vision", "Image Processing and Computer Vision"),
-    "foot_group": ("Kelompok 6", "Group 6"),
-    "foot_dev": ("Dikembangkan oleh Silvana dan Asyh", "Developed by Silvana and Asyh"),
-    "foot_lab_course": ("Mata kuliah", "Course"), "foot_lab_dev": ("Pengembang", "Developers"),
-    "foot_built": ("Dibuat dengan Streamlit, OpenCV, dan NumPy", "Built with Streamlit, OpenCV, and NumPy"),
     "lang_t": ("Bahasa", "Language"),
     "band": ("Siap merapikan fotomu?", "Ready to clean up your photo?"),
     "m_hint": ("Klik tombol pada kartu untuk membalik dan melihat penjelasannya.", "Use the button on a card to flip it and read the explanation."),
     "m_flip": ("Lihat penjelasan ↻", "See explanation ↻"), "m_back": ("Kembali ke rumus ↻", "Back to formula ↻"),
     "m_sym": ("Arti simbol", "What the symbols mean"), "m_how": ("Cara kerja", "How it works"), "m_use": ("Di Pixora", "In Pixora"),
     "about_t": ("Tentang Pixora", "About Pixora"),
-    "about_d": ("Pixora adalah aplikasi web untuk menganalisis dan memperbaiki foto dokumen, seperti catatan kuliah, materi belajar, atau tulisan di papan tulis. Pixora membaca kondisi foto dari nilai pikselnya, memberi saran perbaikan yang sesuai, lalu kamu yang memutuskan dan mengatur hasilnya. Saran dibuat dengan aturan (rule-based) dari nilai piksel, bukan kecerdasan buatan.",
-                "Pixora is a web app that analyzes and improves document photos such as lecture notes, study material, or whiteboard writing. It reads your photo's condition from its pixel values, suggests fitting fixes, and lets you decide and fine-tune the result. Suggestions are rule-based on pixel values, not artificial intelligence."),
+    "about_d": ("Pixora adalah aplikasi web untuk menganalisis dan memperbaiki foto dokumen, seperti catatan kuliah, materi belajar, atau tulisan di papan tulis. Pixora membaca kondisi foto dari nilai pikselnya, memberi saran perbaikan lengkap dengan nilai awalnya, lalu kamu yang memutuskan dan mengatur hasilnya. Saran dibuat dengan aturan (rule-based) dari nilai piksel, bukan kecerdasan buatan.",
+                "Pixora is a web app that analyzes and improves document photos such as lecture notes, study material, or whiteboard writing. It reads your photo's condition from its pixel values, suggests fixes with ready-made starting values, and lets you decide and fine-tune the result. Suggestions are rule-based on pixel values, not artificial intelligence."),
     "steps_t": ("Tahapan", "The steps"),
-    "t1": ("Unggah foto", "Upload a photo"), "t1d": ("Pilih foto catatan, materi, atau papan tulis dalam format JPG, PNG, atau BMP.", "Pick a photo of notes, study material, or a whiteboard in JPG, PNG, or BMP."),
+    "t1": ("Unggah foto", "Upload a photo"), "t1d": ("Pilih foto catatan, materi, atau papan tulis dalam format JPG, PNG, BMP, atau PDF.", "Pick a photo of notes, study material, or a whiteboard in JPG, PNG, BMP, or PDF."),
     "t2": ("Analisis otomatis", "Automatic analysis"), "t2d": ("Pixora mengukur kecerahan, kontras, noise, dan ketajaman, lalu menandai mana yang bermasalah.", "Pixora measures brightness, contrast, noise, and sharpness, and flags what is off."),
-    "t3": ("Rekomendasi dan perbaikan", "Recommend & enhance"), "t3d": ("Masalah muncul satu per satu beserta metode yang cocok. Terapkan atau lewati, lalu atur kekuatannya dengan slider.", "Issues appear one at a time with a fitting method. Apply or skip, then tune the strength with sliders."),
+    "t3": ("Saran dan perbaikan", "Suggest & enhance"), "t3d": ("Tiap saran sudah berisi nilai awal. Terapkan satu per satu atau sekaligus, lalu atur sendiri dengan slider kalau perlu.", "Each suggestion comes with starting values. Apply them one by one or all at once, then tune with sliders if you like."),
     "t4": ("Hasil dan unduh", "Result & download"), "t4d": ("Bandingkan sebelum dan sesudah, lalu unduh hasilnya sebagai PNG.", "Compare before and after, then download the result as PNG."),
 }
 SHORT = {
@@ -117,6 +113,7 @@ SHORT = {
     "Laplacian Filter": ("pertajam tulisan", "sharpen text"), "Average Filter": ("haluskan citra", "smooth image"),
     "Sobel Filter": ("tampilkan tepi", "show edges"),
 }
+PARAM_LABEL = {"gamma": "Gamma", "p_low": "Black", "p_high": "White", "k": "k", "c": "c"}
 METHOD_INFO = [
     dict(name="Gamma Correction", group=("Transformasi intensitas", "Intensity transform"),
          latex=r"s = c \cdot r^{\gamma}",
@@ -156,8 +153,8 @@ METHOD_INFO = [
               "k × k = window size. f(s,t) = the pixels inside the window."),
          how=("Piksel diganti dengan rata-rata tetangganya. Hasilnya halus, tetapi tepi huruf jadi sedikit buram.",
               "Each pixel is replaced by the average of its neighbors. The result is smooth but letter edges get slightly blurred."),
-         use=("Tidak disarankan otomatis. Bisa dicoba lewat Metode manual di Pengaturan lanjutan untuk meredam gangguan kecil.",
-              "Not suggested automatically. Try it via Manual method in Advanced settings to soften small disturbances.")),
+         use=("Tidak disarankan otomatis. Bisa dicoba lewat Atau pilih metode sendiri untuk meredam gangguan kecil.",
+              "Not suggested automatically. Try it via Or pick a method yourself to soften small disturbances.")),
     dict(name="Laplacian Filter", group=("Filter spasial", "Spatial filter"),
          latex=r"g = f - c\,\nabla^{2} f",
          sym=("∇²f = turunan kedua, yaitu seberapa cepat intensitas berubah di sekitar piksel. c = bobot penajaman.",
@@ -172,8 +169,8 @@ METHOD_INFO = [
               "Gx and Gy = intensity change in the horizontal and vertical directions."),
          how=("Besar gradien menunjukkan seberapa kuat tepi di tiap piksel. Hasilnya berupa peta tepi.",
               "The gradient magnitude shows how strong the edge is at each pixel. The output is an edge map."),
-         use=("Untuk memeriksa tepi tulisan lewat Metode manual. Karena hasilnya peta tepi, turunkan slider Intensitas agar bercampur dengan foto.",
-              "For inspecting text edges via Manual method. Since the output is an edge map, lower the Intensity slider to blend it with the photo.")),
+         use=("Untuk memeriksa tepi tulisan lewat pilihan metode manual. Karena hasilnya peta tepi, turunkan slider Intensitas agar bercampur dengan foto.",
+              "For inspecting text edges via the manual method picker. Since the output is an edge map, lower the Intensity slider to blend it with the photo.")),
 ]
 
 ss = st.session_state
@@ -189,11 +186,6 @@ def tr(pair):
 
 
 # ============================================================ GAYA (palet Starry Night)
-import base64
-import math
-import random
-
-
 def _uri(svg):
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
@@ -208,7 +200,6 @@ def _star(cx, cy, R, r, n=5):
 
 
 def contour_svg(color, opacity):
-    """Bentuk bintang berlapis-lapis (seperti kontur) untuk hiasan latar."""
     layers = "".join(
         f'<polygon points="{_star(300, 300, R, R * 0.64)}" stroke-opacity="{opacity * (1 - i * 0.08):.3f}"/>'
         for i, R in enumerate(range(50, 300, 34)))
@@ -217,7 +208,6 @@ def contour_svg(color, opacity):
 
 
 def sparkle_svg(color, count=16, size=900, seed=7, top=0.55):
-    """Kilau bintang kecil yang tersebar (ubin berulang)."""
     rnd = random.Random(seed)
     out = ""
     for _ in range(count):
@@ -238,24 +228,16 @@ h1,h2,h3,h4,.hero-h,.sec h2,.todo h3,.tile .v,.pg,.band-t,.how,.sc .sn,.sc .stt,
 :root{--ink:#0C1446;--muted:#6B7BA0;--line:#CFE0EE;--pri:#2B5C92;--pri2:#7FA6CC;--sky:#B3CDE0;--soft:#E9F1F8;
 --amber:#B45309;--amber-l:#FEF3C7;--green:#15803D;--green-l:#DCFCE7;}
 
-/* ===== latar halaman: kabut biru, kisi, bintang berlapis, kilau ===== */
-.stApp{background:
-  url("__CONTOUR_L__") no-repeat right -150px bottom -80px / 600px,
-  radial-gradient(ellipse at 0% 0%, rgba(43,92,146,.38), transparent 46%),
-  radial-gradient(ellipse at 0% 100%, rgba(12,20,70,.30), transparent 52%),
-  radial-gradient(ellipse at 100% 18%, rgba(179,205,224,.55), transparent 46%), #F5F9FD;
-  background-attachment:fixed;}
-.stApp::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
-  background-image:linear-gradient(rgba(43,92,146,.11) 1px,transparent 1px),linear-gradient(90deg,rgba(43,92,146,.11) 1px,transparent 1px);
-  background-size:38px 38px;-webkit-mask-image:linear-gradient(135deg,#000 0%,transparent 48%);mask-image:linear-gradient(135deg,#000 0%,transparent 48%);}
-.stApp::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:url("__SPARK_L__") 0 0 / 900px 900px;opacity:.9;}
+/* ===== latar halaman: polos, bersih ===== */
+.stApp{background:linear-gradient(180deg,#F7FAFD 0%,#EBF3FA 100%);background-attachment:fixed;}
 [data-testid="stAppViewContainer"],[data-testid="stMain"]{position:relative;z-index:1;}
 header[data-testid="stHeader"],[data-testid="stDecoration"]{display:none !important;}
-.block-container{max-width:1020px;padding-top:1rem;padding-bottom:4rem;}
+/* LEBAR: dulu 1020px, sekarang hampir selebar layar */
+.block-container{max-width:1560px !important;width:95%;padding:1rem 2rem 4rem !important;}
 h1,h2,h3,h4{color:var(--ink);}
 [data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]{display:none !important;}
 
-/* ===== toolbar: satu pill panjang ===== */
+/* ===== toolbar ===== */
 .st-key-nav{background:rgba(255,255,255,.93);border:2px solid var(--line);border-radius:999px;padding:.4rem .6rem;
   box-shadow:0 14px 34px -18px rgba(12,20,70,.55);backdrop-filter:blur(8px);margin-bottom:1.3rem;}
 .st-key-nav [data-testid="stHorizontalBlock"]{gap:.35rem;align-items:center;}
@@ -273,7 +255,7 @@ h1,h2,h3,h4{color:var(--ink);}
   background:linear-gradient(135deg,#0C1446,#2B5C92 70%,#B3CDE0);box-shadow:inset 0 0 0 6px rgba(255,255,255,.18);}
 
 /* ===== hero ===== */
-.st-key-hero{position:relative;overflow:hidden;border:2px solid rgba(255,255,255,.6);border-radius:32px;padding:2.4rem 2.6rem;
+.st-key-hero{position:relative;overflow:hidden;border:2px solid rgba(255,255,255,.6);border-radius:32px;padding:2.6rem 3rem;
   background:url("__SPARK_W__") 0 0 / 700px 700px, url("__CONTOUR_W__") no-repeat 62% 50% / 440px,
     linear-gradient(115deg,#0C1446 0%,#173A74 28%,#2B5C92 48%,#B3CDE0 76%,#FFFFFF 100%);
   box-shadow:0 30px 60px -32px rgba(12,20,70,.75);}
@@ -282,15 +264,15 @@ h1,h2,h3,h4{color:var(--ink);}
   background-size:34px 34px;-webkit-mask-image:linear-gradient(120deg,#000 0%,transparent 62%);mask-image:linear-gradient(120deg,#000 0%,transparent 62%);}
 .st-key-hero [data-testid="stHorizontalBlock"]{position:relative;z-index:1;}
 .eyebrow{color:#B3CDE0;font-weight:800;letter-spacing:.16em;font-size:.8rem;text-transform:uppercase;}
-.hero-h{font-size:4.8rem;font-weight:800;letter-spacing:-.04em;line-height:1;margin:.3rem 0 .6rem;color:#fff;}
-.hero-p{font-size:1.1rem;color:#E3EEF8;max-width:430px;margin:0 0 .9rem;line-height:1.55;}
+.hero-h{font-size:5.2rem;font-weight:800;letter-spacing:-.04em;line-height:1;margin:.3rem 0 .6rem;color:#fff;}
+.hero-p{font-size:1.15rem;color:#E3EEF8;max-width:480px;margin:0 0 .9rem;line-height:1.55;}
 .chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1.1rem;}
 .chip2{background:rgba(255,255,255,.14);border:1.5px solid rgba(255,255,255,.38);color:#fff;font-weight:700;font-size:.82rem;padding:.25rem .8rem;border-radius:999px;}
 .st-key-hero button[data-testid="stBaseButton-primary"]{background:#fff !important;color:var(--ink) !important;border:none !important;font-weight:800;
   box-shadow:0 12px 24px -12px rgba(0,0,0,.6);}
 .sp{position:absolute;z-index:0;background:#fff;clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);animation:twinkle 3.2s ease-in-out infinite;pointer-events:none;}
 .mock{display:flex;align-items:center;justify-content:center;gap:.4rem;padding:1.2rem 0;}
-.doc{position:relative;width:44%;aspect-ratio:3/4;border-radius:18px;padding:1.4rem 1rem 1rem;display:flex;flex-direction:column;gap:.55rem;box-shadow:0 22px 38px -20px rgba(12,20,70,.7);}
+.doc{position:relative;width:40%;aspect-ratio:3/4;border-radius:18px;padding:1.4rem 1rem 1rem;display:flex;flex-direction:column;gap:.55rem;box-shadow:0 22px 38px -20px rgba(12,20,70,.7);}
 .doc i{display:block;height:8px;border-radius:6px;}
 .doc.b{background:#46527E;transform:rotate(-5deg);} .doc.b i{background:#9DB0D3;filter:blur(1.6px);opacity:.85;}
 .doc.b::after{content:"";position:absolute;inset:0;border-radius:18px;background-image:radial-gradient(rgba(0,0,0,.4) 1px,transparent 1.2px);background-size:6px 6px;opacity:.5;}
@@ -300,11 +282,11 @@ h1,h2,h3,h4{color:var(--ink);}
 .mock .arrow{font-size:1.8rem;color:#fff;font-weight:800;text-shadow:0 2px 8px rgba(12,20,70,.5);}
 .stats{display:flex;justify-content:center;flex-wrap:wrap;gap:.7rem;margin:1.2rem 0 .4rem;}
 .stat{background:#fff;border:2px solid var(--line);border-radius:999px;padding:.4rem 1.1rem;font-weight:800;color:var(--pri);font-size:.92rem;}
-.about{background:rgba(255,255,255,.88);border:2px solid var(--line);border-radius:24px;padding:1.4rem 1.6rem;margin:1.2rem 0 0;}
+.about{background:rgba(255,255,255,.88);border:2px solid var(--line);border-radius:24px;padding:1.4rem 1.8rem;margin:1.2rem 0 0;}
 .about h3{margin:0 0 .4rem;font-size:1.3rem;} .about p{margin:0;color:#34456E;line-height:1.7;font-size:1rem;}
 .how{text-align:center;font-size:1.5rem;font-weight:800;margin:1.8rem 0 .8rem;color:var(--ink);}
 
-/* ===== kartu: depan = nomor + judul, klik = berbalik & deskripsi muncul (murni di browser) ===== */
+/* ===== kartu tahapan ===== */
 .fcgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;align-items:start;}
 details.fc{background:rgba(255,255,255,.92);border:2px solid var(--line);border-radius:24px;padding:1.5rem 1rem 1.3rem;text-align:center;min-height:190px;
   transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease;animation:flipfront .6s ease;}
@@ -313,17 +295,14 @@ details.fc summary::-webkit-details-marker{display:none;}
 details.fc:hover{transform:translateY(-5px);box-shadow:0 22px 34px -22px rgba(12,20,70,.65);border-color:var(--pri2);}
 details.fc .sn{width:66px;height:66px;border-radius:50%;margin:0 auto .8rem;display:flex;align-items:center;justify-content:center;font-size:1.9rem;font-weight:800;color:#fff;
   font-family:'Outfit',sans-serif;background:linear-gradient(135deg,#2B5C92,#0C1446);box-shadow:0 12px 24px -10px rgba(12,20,70,.7), inset 0 0 0 5px rgba(255,255,255,.14);}
-details.fc .sn.logo{border-radius:22px;background:linear-gradient(135deg,#0C1446,#2B5C92 70%,#B3CDE0);}
 details.fc .stt{font-family:'Outfit',sans-serif;font-weight:800;font-size:1.12rem;color:var(--ink);line-height:1.25;}
 details.fc .hint{margin-top:.7rem;font-size:.78rem;font-weight:700;color:var(--pri2);letter-spacing:.04em;}
 details.fc .sd{margin-top:.8rem;color:#E3EEF8;font-size:.93rem;line-height:1.6;}
 details.fc[open]{background:linear-gradient(150deg,#0C1446 0%,#1F4A80 55%,#2B5C92 100%);border-color:#2B5C92;animation:flipback .6s ease;
   box-shadow:0 22px 34px -22px rgba(12,20,70,.85);}
 details.fc[open] .sn{width:46px;height:46px;font-size:1.25rem;margin-bottom:.5rem;background:rgba(255,255,255,.16);box-shadow:none;}
-details.fc[open] .sn.logo{border-radius:16px;}
 details.fc[open] .stt{color:#fff;font-size:1.05rem;}
 details.fc[open] .hint{display:none;}
-details.fc.wide{min-height:150px;} details.fc.wide .sd{max-width:780px;margin-left:auto;margin-right:auto;}
 @keyframes flipfront{from{transform:perspective(900px) rotateY(-90deg);opacity:0;}to{transform:perspective(900px) rotateY(0);opacity:1;}}
 @keyframes flipback{from{transform:perspective(900px) rotateY(90deg);opacity:0;}to{transform:perspective(900px) rotateY(0);opacity:1;}}
 @media(max-width:900px){.fcgrid{grid-template-columns:1fr 1fr;}}
@@ -345,10 +324,10 @@ details.fc.wide{min-height:150px;} details.fc.wide .sd{max-width:780px;margin-le
 .guide{background:#fff;border:2px solid var(--line);border-radius:16px;padding:.8rem 1.1rem;display:flex;gap:.8rem;align-items:center;margin-bottom:.4rem;}
 .guide .tag{background:var(--pri);color:#fff;border-radius:999px;padding:.2rem .8rem;font-size:.78rem;font-weight:800;white-space:nowrap;}
 .guide .tx{font-weight:700;color:var(--ink);}
-.sec{display:flex;gap:.8rem;align-items:center;margin:2rem 0 .7rem;}
+.sec{display:flex;gap:.8rem;align-items:center;margin:1.8rem 0 .7rem;}
 .sec .badge{flex:none;width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2B5C92,#0C1446);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;}
 .sec h2{margin:0;padding:0;font-size:1.3rem;}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin:.4rem 0;}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.8rem;margin:.4rem 0;}
 .tile{background:rgba(255,255,255,.92);border:2px solid var(--line);border-radius:16px;padding:.7rem .9rem;}
 .tile .l{color:var(--muted);font-size:.78rem;font-weight:600;} .tile .v{font-size:1.5rem;font-weight:700;color:var(--ink);line-height:1.3;}
 .chip{display:inline-block;font-size:.72rem;font-weight:800;padding:.1rem .6rem;border-radius:999px;}
@@ -356,7 +335,10 @@ details.fc.wide{min-height:150px;} details.fc.wide .sd{max-width:780px;margin-le
 .todo{background:#fff;border:2px solid var(--line);border-left:8px solid var(--pri);border-radius:16px;padding:1rem 1.2rem;margin-bottom:.6rem;}
 .todo .k{color:var(--pri);font-size:.75rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;}
 .todo h3{margin:.15rem 0 .2rem;font-size:1.25rem;} .todo p{margin:.1rem 0;color:#4A5A80;font-size:.93rem;}
-.todo .rec{margin-top:.6rem;padding:.5rem .8rem;background:var(--soft);border-radius:10px;color:var(--ink);font-size:.95rem;}
+.todo .rec{margin-top:.6rem;padding:.6rem .8rem;background:var(--soft);border-radius:10px;color:var(--ink);font-size:.95rem;}
+.vals{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.45rem;align-items:center;}
+.val{background:#fff;border:1.5px solid var(--pri2);color:var(--pri);font-weight:800;font-size:.78rem;padding:.1rem .6rem;border-radius:999px;}
+.valtag{font-size:.72rem;font-weight:700;color:var(--muted);}
 .notice{background:#FFF8EC;border:2px solid #F3D9A4;border-left:8px solid #E9A23B;border-radius:16px;padding:1rem 1.2rem;margin:.4rem 0 .8rem;}
 .notice .k{color:#B45309;font-size:.75rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;}
 .notice h3{margin:.15rem 0 .3rem;font-size:1.25rem;} .notice p{margin:.15rem 0;color:#5F4B2A;font-size:.95rem;}
@@ -371,6 +353,11 @@ details.fc.wide{min-height:150px;} details.fc.wide .sd{max-width:780px;margin-le
 .stTabs [data-baseweb="tab"]{font-weight:800;} .stTabs [data-baseweb="tab-list"]{gap:.4rem;}
 .stButton>button,.stDownloadButton>button{border-radius:999px;font-weight:700;}
 
+/* pratinjau menempel di kiri saat panel kanan di-scroll */
+[data-testid="stColumn"]:has(.st-key-preview){align-self:flex-start;position:sticky;top:.8rem;}
+.st-key-preview img{max-height:76vh;object-fit:contain;}
+.st-key-preview{background:rgba(255,255,255,.7);border:2px solid var(--line);border-radius:20px;padding:.6rem .8rem;}
+
 /* ===== gerak halus ===== */
 @keyframes rise{from{opacity:0;transform:translateY(18px);}to{opacity:1;transform:none;}}
 @keyframes flipin{from{transform:perspective(900px) rotateY(88deg);opacity:0;}to{transform:perspective(900px) rotateY(0);opacity:1;}}
@@ -384,11 +371,11 @@ details.fc.wide{min-height:150px;} details.fc.wide .sd{max-width:780px;margin-le
 .scanwrap::before{content:"";position:absolute;left:0;right:0;height:34px;background:linear-gradient(transparent,rgba(179,205,224,.9),transparent);animation:scan 2.8s ease-in-out infinite;}
 .stats,.about,.how{animation:rise .7s ease both;}
 @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important;}}
-@media(max-width:800px){.hero-h{font-size:3.2rem;}.st-key-hero{padding:1.6rem 1.2rem;}}
+@media(max-width:800px){.hero-h{font-size:3.2rem;}.st-key-hero{padding:1.6rem 1.2rem;}
+  [data-testid="stColumn"]:has(.st-key-preview){position:static;}}
 </style>
 """
-CSS = (CSS.replace("__CONTOUR_L__", contour_svg("#2B5C92", .17)).replace("__CONTOUR_W__", contour_svg("#FFFFFF", .32))
-          .replace("__SPARK_L__", sparkle_svg("#2B5C92", 18, 900, 7, .5)).replace("__SPARK_W__", sparkle_svg("#FFFFFF", 22, 700, 3, .85)))
+CSS = (CSS.replace("__CONTOUR_W__", contour_svg("#FFFFFF", .32)).replace("__SPARK_W__", sparkle_svg("#FFFFFF", 22, 700, 3, .85)))
 st.markdown(CSS, unsafe_allow_html=True)
 
 
@@ -482,19 +469,53 @@ ss.setdefault("flipped", set())
 ss.setdefault("pdf_page", 1)
 ss.setdefault("pdf_out", None)
 ss.setdefault("force_sig", None)
-ss.setdefault("open_step", None)
-ss.setdefault("open_about", False)
+
+# prefiks kunci slider tiap parameter (dipakai untuk "kembali ke saran otomatis")
+SLIDER_PREFIX = {"gamma": "g", "p_low": "pl", "p_high": "ph", "k": "k", "c": "c"}
+
+
+def relevant(meth, defaults):
+    """Hanya parameter yang memang dimiliki metode itu."""
+    own = default_params(meth)
+    return {k: v for k, v in (defaults or {}).items() if k in own}
 
 
 def add_step(method, defaults=None, issue_key=None):
     for s in ss.steps:
         s["confirmed"] = True
     d = default_params(method)
-    d.update(defaults or {})
-    ss.steps.append({"id": ss.next_id, "method": method, "defaults": d, "alpha": 100, "confirmed": False})
+    d.update(relevant(method, defaults))
+    ss.steps.append({"id": ss.next_id, "method": method, "defaults": d, "auto": dict(d),
+                     "alpha": 100, "confirmed": False})
     ss.next_id += 1
     if issue_key:
         ss.attempted.add(issue_key)
+
+
+def replay(g):
+    """Jalankan semua langkah yang sudah ada pada citra g."""
+    cur = g
+    for s in ss.steps:
+        cur = blend(cur, apply_method(s["method"], cur, s["defaults"]), s.get("alpha", 100) / 100)
+    return cur
+
+
+def apply_all(g, th_, lang):
+    """Terapkan semua saran berurutan (noise, terang, kontras, tajam), tiap langkah
+    dihitung dari hasil langkah sebelumnya. Hasilnya langsung tersimpan di riwayat."""
+    cur = replay(g)
+    done = set()
+    for _ in range(5):
+        found = [x for x in find_issues(analyze(cur), th_, lang)
+                 if x["key"] not in ss.dismissed and x["key"] not in done]
+        if not found:
+            break
+        it = found[0]
+        meth = it["methods"][0]
+        add_step(meth, it["defaults"], it["key"])
+        ss.steps[-1]["confirmed"] = True
+        done.add(it["key"])
+        cur = blend(cur, apply_method(meth, cur, ss.steps[-1]["defaults"]), 1.0)
 
 
 def confirm_step(step_id):
@@ -505,6 +526,17 @@ def confirm_step(step_id):
 
 def remove_step(step_id):
     ss.steps = [s for s in ss.steps if s["id"] != step_id]
+
+
+def reset_auto(step_id):
+    """Kembalikan slider langkah ini ke nilai saran otomatis."""
+    for s in ss.steps:
+        if s["id"] == step_id:
+            s["defaults"].update(s["auto"])
+            s["alpha"] = 100
+            for p in s["auto"]:
+                ss.pop(f"{SLIDER_PREFIX[p]}{step_id}", None)
+            ss.pop(f"a{step_id}", None)
 
 
 def dismiss(key):
@@ -526,14 +558,6 @@ def clear_photo():
 
 def force_analyze(sig_):
     ss.force_sig = sig_
-
-
-def toggle_about():
-    ss.open_about = not ss.open_about
-
-
-def toggle_step(i):
-    ss.open_step = None if ss.open_step == i else i
 
 
 def go(page):
@@ -559,7 +583,7 @@ def stop_page():
     st.stop()
 
 
-# ============================================================ TOOLBAR (satu pill: logo + menu + bahasa)
+# ============================================================ TOOLBAR
 with st.container(key="nav"):
     cols = st.columns([1.35, 1, 1.35, 1, 0.85], vertical_alignment="center")
     cols[0].button("Pixora", key="nav_brand", width="stretch", on_click=go, args=("home",))
@@ -598,7 +622,6 @@ if page == "home":
             unsafe_allow_html=True)
     st.markdown(f'<div class="stats"><span class="stat">{t("stat1")}</span><span class="stat">{t("stat2")}</span>'
                 f'<span class="stat">{t("stat3")}</span></div>', unsafe_allow_html=True)
-    st.markdown("&nbsp;")
     st.markdown(f'<div class="about"><h3>{t("about_t")}</h3><p>{t("about_d")}</p></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="how">{t("steps_t")}</div>', unsafe_allow_html=True)
     fc_html = "".join(
@@ -732,7 +755,7 @@ def status(m):
     return br, ct, nz, sp
 
 
-# ---- 2. Analisis: empat indikator dalam satu baris
+# ---- 2. Analisis
 with cond_box:
     section(2, t("s2"))
     br, ct, nz, sp = status(m0)
@@ -742,16 +765,34 @@ with cond_box:
         + tile(t("noise"), f"{m0['noise_ratio'] * 100:.2f}%", nz) + tile(t("sharp"), f"{m0['sharpness']:.0f}", sp)
         + '</div>', unsafe_allow_html=True)
 
-# ---- 3. Perbaiki: kiri = pratinjau langsung, kanan = yang harus dilakukan
+# ---- 3. Perbaiki: kiri = pratinjau besar, kanan = saran + penyetelan
 with work_box:
     section(3, t("s3"))
-    left, right = st.columns([1.05, 1], gap="large")
+    left, right = st.columns([1.35, 1], gap="large")
 right_top = right.container()
 right_hist = right.container()
 
 if any(s_["confirmed"] for s_ in ss.steps):
     with right_hist:
         st.markdown(f"#### {t('history')}")
+
+
+def param_slider(name, p, d, sid):
+    """Slider parameter sesuai metode; rentang diambil dari PARAM_RANGE."""
+    if name == "Gamma Correction":
+        lo, hi, sp_ = PARAM_RANGE["gamma"]
+        p["gamma"] = st.slider(t("gamma"), lo, hi, float(d["gamma"]), sp_, key=f"g{sid}")
+    elif name == "Contrast Stretching":
+        lo, hi, sp_ = PARAM_RANGE["p_low"]
+        p["p_low"] = st.slider(t("black"), lo, hi, float(d["p_low"]), sp_, key=f"pl{sid}")
+        lo, hi, sp_ = PARAM_RANGE["p_high"]
+        p["p_high"] = st.slider(t("white"), lo, hi, float(d["p_high"]), sp_, key=f"ph{sid}")
+    elif name in ("Median Filter", "Average Filter"):
+        p["k"] = st.select_slider(t("window"), [3, 5, 7, 9], int(d["k"]), key=f"k{sid}")
+    elif name == "Laplacian Filter":
+        lo, hi, sp_ = PARAM_RANGE["c"]
+        p["c"] = st.slider(t("weight"), lo, hi, float(d["c"]), sp_, key=f"c{sid}")
+
 
 current = gray
 unconfirmed_id = None
@@ -767,32 +808,26 @@ for i, s_ in enumerate(ss.steps):
         if not done:
             st.markdown(f'<div class="edit-h">{t("tune")} · {name}</div>', unsafe_allow_html=True)
         p = {}
-        if name == "Gamma Correction":
-            p["gamma"] = st.slider(t("gamma"), 0.1, 3.0, float(d["gamma"]), 0.05, key=f"g{sid}")
-        elif name == "Contrast Stretching":
-            p["p_low"] = st.slider(t("black"), 0.0, 30.0, float(d["p_low"]), 0.5, key=f"pl{sid}")
-            p["p_high"] = st.slider(t("white"), 70.0, 100.0, float(d["p_high"]), 0.5, key=f"ph{sid}")
-        elif name in ("Median Filter", "Average Filter"):
-            p["k"] = st.select_slider(t("window"), [3, 5, 7, 9], int(d["k"]), key=f"k{sid}")
-        elif name == "Laplacian Filter":
-            p["c"] = st.slider(t("weight"), 0.1, 3.0, float(d["c"]), 0.1, key=f"c{sid}")
+        param_slider(name, p, d, sid)
         alpha = st.slider(t("intensity"), 0, 100, int(s_.get("alpha", 100)), 5, key=f"a{sid}") / 100
         s_["alpha"] = int(alpha * 100)
         d.update(p)
         current = blend(before, apply_method(name, before, p), alpha)
+        has_params = bool(s_["auto"])
         if not done:
             b1, b2 = st.columns(2)
             b1.button(t("save"), key=f"ok{sid}", type="primary", on_click=confirm_step, args=(sid,), width="stretch")
             b2.button(t("cancel"), key=f"cancel{sid}", on_click=remove_step, args=(sid,), width="stretch")
+            if has_params:
+                st.button(t("auto_back"), key=f"auto{sid}", on_click=reset_auto, args=(sid,), width="stretch")
         else:
-            st.button(t("delete"), key=f"del{sid}", on_click=remove_step, args=(sid,))
+            e1, e2 = st.columns(2)
+            e1.button(t("delete"), key=f"del{sid}", on_click=remove_step, args=(sid,), width="stretch")
+            if has_params:
+                e2.button(t("auto_back"), key=f"auto{sid}", on_click=reset_auto, args=(sid,), width="stretch")
 
 m1 = analyze(current)
-try:
-    _found = find_issues(m1, th, ss.lang)
-except TypeError:            # analysis.py versi lama (belum dwibahasa)
-    _found = find_issues(m1, th)
-issues = [x for x in _found if x["key"] not in ss.dismissed]
+issues = [x for x in find_issues(m1, th, ss.lang) if x["key"] not in ss.dismissed]
 
 with right_top:
     if unconfirmed_id is None:
@@ -800,25 +835,39 @@ with right_top:
             it = issues[0]
             note = f"<p>{t('still')}</p>" if it["key"] in ss.attempted else ""
             saran = " / ".join(f"<b>{m_}</b> ({tr(SHORT[m_])})" for m_ in it["methods"])
+            vals = relevant(it["methods"][0], it["defaults"])
+            chips_v = "".join(f'<span class="val">{PARAM_LABEL[k]} {v}</span>' for k, v in vals.items())
+            vals_html = f'<div class="vals">{chips_v}<span class="valtag">{t("auto_tag")}</span></div>' if vals else ""
             st.markdown(
                 f'<div class="todo"><div class="k">{t("found")}</div><h3>{it["title"]}</h3>'
-                f'<p>{it["detail"]}</p>{note}<div class="rec">{t("suggest")}: {saran}</div></div>',
+                f'<p>{it["detail"]}</p>{note}<div class="rec">{t("suggest")}: {saran}{vals_html}</div></div>',
                 unsafe_allow_html=True)
             for meth in it["methods"]:
                 st.button(f"{t('apply')} {meth}", key=f"fix_{it['key']}_{meth}", type="primary",
                           on_click=add_step, args=(meth, it["defaults"], it["key"]), width="stretch")
-            st.button(t("skip"), key=f"skip_{it['key']}", on_click=dismiss, args=(it["key"],), width="stretch")
             if len(issues) > 1:
+                st.button(f"⚡ {t('apply_all')}", key="apply_all", on_click=apply_all,
+                          args=(gray, th, ss.lang), width="stretch")
                 st.caption(f"{len(issues) - 1} {t('more_issues')}")
+            st.button(t("skip"), key=f"skip_{it['key']}", on_click=dismiss, args=(it["key"],), width="stretch")
         else:
             st.success(t("no_issue"))
         if ss.dismissed:
             st.button(t("show_skipped"), on_click=restore_skipped)
+        with st.expander(t("manual_pick"), expanded=not issues and not ss.steps):
+            st.caption(t("manual_hint"))
+            man = st.selectbox(t("method"), METHODS, key="manual_sel",
+                               format_func=lambda m_: f"{m_} ({tr(SHORT[m_])})")
+            st.button(t("add"), key="add_manual", on_click=add_step, args=(man,), width="stretch")
 
 with left:
-    tab_after, tab_before = st.tabs([t("after"), t("before")])
-    tab_after.image(current, width="stretch", clamp=True)
-    tab_before.image(gray, width="stretch", clamp=True)
+    with st.container(key="preview"):
+        tab_after, tab_before, tab_side = st.tabs([t("after"), t("before"), t("side")])
+        tab_after.image(current, width="stretch", clamp=True)
+        tab_before.image(gray, width="stretch", clamp=True)
+        sa, sb = tab_side.columns(2)
+        sa.image(gray, caption=t("before"), width="stretch", clamp=True)
+        sb.image(current, caption=t("after"), width="stretch", clamp=True)
 
 # ---- 4. Hasil
 with res_box:
@@ -858,10 +907,7 @@ with res_box:
 with adv_box:
     st.markdown("&nbsp;")
     with st.expander(t("adv")):
-        t1, t2, t3 = st.tabs([t("tab1"), t("tab2"), t("tab3")])
-        with t1:
-            man = st.selectbox(t("method"), METHODS, key="manual_sel")
-            st.button(t("add"), on_click=add_step, args=(man,))
+        t2, t3 = st.tabs([t("tab2"), t("tab3")])
         with t2:
             S = ss.th_saved
             st.slider(t("th_dark"), 0, 255, int(S["dark"]), key="th_dark")
